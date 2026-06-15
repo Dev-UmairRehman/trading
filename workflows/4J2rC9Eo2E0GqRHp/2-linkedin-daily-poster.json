@@ -1,0 +1,114 @@
+{
+  "name": "2 - LinkedIn Daily Auto-Poster",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "trigger-daily",
+      "name": "Every Day 9AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const topics = [\n  'an AI automation that saved a client 20 hours/week',\n  'a contrarian take on AI replacing developers',\n  'a story about closing a $5K client with cold email',\n  'a tactical breakdown of an n8n workflow',\n  'a lesson learned from a failed automation project',\n  'why most AI agencies fail in year one',\n  'a behind-the-scenes look at building a SaaS MVP'\n];\nconst day = new Date().getDay();\nreturn { topic: topics[day % topics.length] };"
+      },
+      "id": "pick-topic",
+      "name": "Pick Topic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"max_tokens\": 800,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Write a LinkedIn post about: {{ $json.topic }}. Rules: Hook in line 1 (scroll-stopper). 150-220 words. Short punchy lines. One concrete example with numbers. End with a question. No emojis. No hashtags inside body — add 3 relevant hashtags on the last line.\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "claude-write-post",
+      "name": "Claude - Write Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300],
+      "credentials": {
+        "httpHeaderAuth": { "id": "fCB1tqIb4QhgN0cM", "name": "Groq API" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const post = $input.first().json.choices[0].message.content.trim();\nreturn { post };"
+      },
+      "id": "extract-post",
+      "name": "Extract Post",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 300]
+    },
+    {
+      "parameters": {
+        "text": "={{ $json.post }}",
+        "additionalFields": {}
+      },
+      "id": "linkedin-post",
+      "name": "LinkedIn - Post",
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [1160, 300],
+      "credentials": {
+        "linkedInOAuth2Api": { "id": "BfyKHFArTzsBvQG9", "name": "LinkedIn account" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "1TNj94tzTZuoqj3gEDVWTxCL5_D5jYMmQ1OA7PZw_dmM",
+        "sheetName": "Sheet1",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $now.toISO() }}",
+            "Topic": "={{ $('Pick Topic').item.json.topic }}",
+            "Post": "={{ $('Extract Post').item.json.post }}",
+            "Status": "Published"
+          }
+        }
+      },
+      "id": "log-post",
+      "name": "Log Post",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [1400, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "wOf2eyzwI6cWNavo", "name": "Google Sheets account" }
+      }
+    }
+  ],
+  "connections": {
+    "Every Day 9AM": { "main": [[{ "node": "Pick Topic", "type": "main", "index": 0 }]] },
+    "Pick Topic": { "main": [[{ "node": "Claude - Write Post", "type": "main", "index": 0 }]] },
+    "Claude - Write Post": { "main": [[{ "node": "Extract Post", "type": "main", "index": 0 }]] },
+    "Extract Post": { "main": [[{ "node": "LinkedIn - Post", "type": "main", "index": 0 }]] },
+    "LinkedIn - Post": { "main": [[{ "node": "Log Post", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

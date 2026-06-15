@@ -1,0 +1,141 @@
+{
+  "id": "cq3fEnppNkhLt9Yj",
+  "name": "Google Maps Email Scraper (Apify Leads)",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "google-maps-leads",
+        "formTitle": "Google Maps Lead Scraper",
+        "formDescription": "Enter a niche and a location to scrape business emails from Google Maps.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Search Term",
+              "placeholder": "e.g. dentist",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Location",
+              "placeholder": "e.g. Amsterdam, Netherlands",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Max Results",
+              "fieldType": "number",
+              "placeholder": "25",
+              "requiredField": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "11111111-1111-1111-1111-111111111111",
+      "name": "Lead Scraper Form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "b7e6c1a2-3d4f-4a5b-8c9d-0e1f2a3b4c5d"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/lukaskrivka~google-maps-with-contact-details/run-sync-get-dataset-items",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "token",
+              "value": "={{ $env.APIFY_API_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ searchStringsArray: [$json['Search Term']], locationQuery: $json['Location'], maxCrawledPlacesPerSearch: (Number($json['Max Results']) || 25), language: 'en', scrapePlaceDetailPage: true }) }}",
+        "options": {
+          "timeout": 290000
+        }
+      },
+      "id": "33333333-3333-3333-3333-333333333333",
+      "name": "Apify - Google Maps Email Extractor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turn scraped Google Maps places into email leads + build a result screen.\nconst places = $input.all();\nconst leads = [];\nfor (const it of places) {\n  const d = it.json || {};\n  const emails = Array.isArray(d.emails) ? d.emails : (d.email ? [d.email] : []);\n  for (const email of emails) {\n    if (!email) continue;\n    leads.push({\n      companyName: d.title || d.name || '',\n      email,\n      website: d.website || '',\n      phone: d.phone || d.phoneUnformatted || '',\n      address: d.address || d.street || '',\n      city: d.city || '',\n      category: d.categoryName || (Array.isArray(d.categories) ? d.categories[0] : '') || '',\n      googleMapsUrl: d.url || ''\n    });\n  }\n}\n\n// de-duplicate by email\nconst seen = new Set();\nconst unique = leads.filter(l => {\n  const k = l.email.toLowerCase();\n  if (seen.has(k)) return false;\n  seen.add(k);\n  return true;\n});\n\nlet html;\nif (unique.length === 0) {\n  html = '<p>Scraped ' + places.length + ' places but found no email addresses. Try a broader niche, a bigger location, or increase Max Results.</p>';\n} else {\n  html = '<p>Scraped ' + places.length + ' places and found <b>' + unique.length + '</b> email leads:</p><ul>' +\n    unique.map(l => '<li><b>' + l.email + '</b> &mdash; ' + (l.companyName || 'Unknown')\n      + (l.website ? ' (<a href=\"' + l.website + '\">website</a>)' : '')\n      + (l.phone ? ' &mdash; ' + l.phone : '') + '</li>').join('') +\n    '</ul>';\n}\n\nreturn [{ json: { count: unique.length, placesScraped: places.length, leadsHtml: html, leads: unique } }];"
+      },
+      "id": "55555555-5555-5555-5555-555555555555",
+      "name": "Build Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "text",
+        "completionTitle": "={{ $json.count }} email leads found",
+        "completionMessage": "={{ $json.leadsHtml }}",
+        "options": {}
+      },
+      "id": "77777777-7777-7777-7777-777777777777",
+      "name": "Show Results",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 1,
+      "position": [
+        720,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Lead Scraper Form": {
+      "main": [
+        [
+          {
+            "node": "Apify - Google Maps Email Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify - Google Maps Email Extractor": {
+      "main": [
+        [
+          {
+            "node": "Build Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Leads": {
+      "main": [
+        [
+          {
+            "node": "Show Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

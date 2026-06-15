@@ -1,0 +1,85 @@
+{
+  "name": "M1 - Error Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "errtrig-1000000000000000000000000000",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const e = $input.first().json;\nreturn [{ json: {\n  workflow: e.workflow?.name || 'unknown',\n  node: e.execution?.lastNodeExecuted || '',\n  message: (e.execution?.error?.message) || JSON.stringify(e.execution?.error || {}).slice(0,500),\n  payload: JSON.stringify(e).slice(0, 1000),\n  at: new Date().toISOString(),\n} }];"
+      },
+      "id": "errfmt-10000000000000000000000000000",
+      "name": "Format Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Errors",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_PAT }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ typecast: true, records: [ { fields: { workflow: $json.workflow, node: $json.node, message: $json.message, payload: $json.payload, at: $json.at } } ] }) }}",
+        "options": {}
+      },
+      "id": "errair-10000000000000000000000000000",
+      "name": "Log to Airtable",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        480,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error": {
+      "main": [
+        [
+          {
+            "node": "Log to Airtable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

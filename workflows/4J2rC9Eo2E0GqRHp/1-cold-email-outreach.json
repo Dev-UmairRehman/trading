@@ -1,0 +1,145 @@
+{
+  "name": "1 - AI Cold Email Outreach",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "trigger-schedule",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.apollo.io/v1/mixed_people/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q_organization_industries[]", "value": "real estate" },
+            { "name": "person_titles[]", "value": "CEO" },
+            { "name": "person_titles[]", "value": "Founder" },
+            { "name": "page", "value": "1" },
+            { "name": "per_page", "value": "10" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "apollo-search",
+      "name": "Apollo - Find Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300],
+      "credentials": {
+        "httpHeaderAuth": { "id": "EX7LivmSvLFMlLtq", "name": "Apollo API" }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "people",
+        "options": {}
+      },
+      "id": "split-leads",
+      "name": "Split Leads",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"max_tokens\": 500,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Write a 4-sentence personalized cold email to {{ $json.first_name }} {{ $json.last_name }}, {{ $json.title }} at {{ $json.organization.name }}. Industry: {{ $json.organization.industry }}. Offer: AI automation services that save them 20+ hours/week. Tone: casual, confident, no fluff. Format: Subject line on first line, then body. Sign off with: 'Best, [Your Name]'\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "claude-personalize",
+      "name": "Claude - Write Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 300],
+      "credentials": {
+        "httpHeaderAuth": { "id": "fCB1tqIb4QhgN0cM", "name": "Groq API" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $input.first().json.choices[0].message.content;\nconst lines = text.split('\\n').filter(l => l.trim());\nconst subject = lines[0].replace(/^Subject:\\s*/i, '');\nconst body = lines.slice(1).join('\\n').trim();\nconst lead = $('Split Leads').item.json;\nreturn { subject, body, to: lead.email, name: `${lead.first_name} ${lead.last_name}` };"
+      },
+      "id": "parse-email",
+      "name": "Parse Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 300]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "send-email",
+      "name": "Gmail - Send",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1400, 300],
+      "credentials": {
+        "gmailOAuth2": { "id": "RE5KvrcKm8U95iWU", "name": "Gmail account" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "1pogFKAVIh5gYnDC2Pd86GndnHrD0GywO6v2tamuEwc0",
+        "sheetName": "Sheet1",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Name": "={{ $('Parse Email').item.json.name }}",
+            "Email": "={{ $('Parse Email').item.json.to }}",
+            "Subject": "={{ $('Parse Email').item.json.subject }}",
+            "SentAt": "={{ $now.toISO() }}",
+            "Status": "Sent"
+          }
+        }
+      },
+      "id": "log-sheet",
+      "name": "Log to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [1640, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "wOf2eyzwI6cWNavo", "name": "Google Sheets account" }
+      }
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": { "main": [[{ "node": "Apollo - Find Leads", "type": "main", "index": 0 }]] },
+    "Apollo - Find Leads": { "main": [[{ "node": "Split Leads", "type": "main", "index": 0 }]] },
+    "Split Leads": { "main": [[{ "node": "Claude - Write Email", "type": "main", "index": 0 }]] },
+    "Claude - Write Email": { "main": [[{ "node": "Parse Email", "type": "main", "index": 0 }]] },
+    "Parse Email": { "main": [[{ "node": "Gmail - Send", "type": "main", "index": 0 }]] },
+    "Gmail - Send": { "main": [[{ "node": "Log to Sheet", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

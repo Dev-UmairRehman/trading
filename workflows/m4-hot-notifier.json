@@ -1,0 +1,232 @@
+{
+  "name": "M4 - Hot Lead Notifier",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "m4man0000000000000000000000000000000",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "m4sched00000000000000000000000000000",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Leads",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "=AND({classification}='Hot',NOT({notified}))"
+            },
+            {
+              "name": "maxRecords",
+              "value": "50"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_PAT }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "m4get0000000000000000000000000000000",
+      "name": "Get New Hot Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        240,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const recs = ($json.records) || [];\nreturn recs.map((r) => ({ json: { recordId: r.id, fields: r.fields } }));"
+      },
+      "id": "m4exp0000000000000000000000000000000",
+      "name": "Expand",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const f = $json.fields || {};\nconst subject = 'Hot lead: ' + (f.business_name || 'unknown') + ' (score ' + (f.lead_score || '') + ')';\nconst body = [\n  'A lead just hit HOT.', '',\n  'Business: ' + (f.business_name || ''),\n  'Category: ' + (f.category || ''),\n  'Location: ' + (f.location || ''),\n  'Website: ' + (f.website || '(none)'),\n  'Phone: ' + (f.phone || ''),\n  'Email: ' + (f.email || '(none)'),\n  'Lead score: ' + (f.lead_score || '') + '  |  Automation: ' + (f.automation_score || ''),\n  '', 'Findings: ' + (f.ai_findings || ''),\n  'Why / next: ' + (f.ai_rationale || ''),\n  '', 'Recommended: review and reply personally if they engaged.',\n].join('\\n');\nreturn { json: { recordId: $json.recordId, subject, body } };"
+      },
+      "id": "m4comp000000000000000000000000000000",
+      "name": "Compose",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.NOTIFY_EMAIL }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "m4mail000000000000000000000000000000",
+      "name": "Email Operator",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        900,
+        300
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "RE5KvrcKm8U95iWU",
+          "name": "Gmail account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Leads",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_PAT }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ records: [ { id: $('Compose').item.json.recordId, fields: { notified: true } } ] }) }}",
+        "options": {}
+      },
+      "id": "m4upd0000000000000000000000000000000",
+      "name": "Mark Notified",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1120,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get New Hot Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get New Hot Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get New Hot Leads": {
+      "main": [
+        [
+          {
+            "node": "Expand",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand": {
+      "main": [
+        [
+          {
+            "node": "Compose",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose": {
+      "main": [
+        [
+          {
+            "node": "Email Operator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Operator": {
+      "main": [
+        [
+          {
+            "node": "Mark Notified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "3sNPCA6YTlyT9Nno"
+  },
+  "pinData": {}
+}

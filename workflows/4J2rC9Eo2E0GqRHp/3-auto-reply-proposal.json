@@ -1,0 +1,231 @@
+{
+  "name": "3 - Auto-Reply + Proposal Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            { "mode": "everyMinute" }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "is:unread label:inbox -from:me",
+          "readStatus": "unread"
+        },
+        "options": {}
+      },
+      "id": "gmail-trigger",
+      "name": "Gmail - New Email",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 300],
+      "credentials": {
+        "gmailOAuth2": { "id": "RE5KvrcKm8U95iWU", "name": "Gmail account" }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"max_tokens\": 200,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Classify this email. Return ONLY one word: PROPOSAL_REQUEST, QUESTION, INTERESTED, NOT_INTERESTED, or OTHER.\\n\\nFrom: {{ $json.from.value[0].address }}\\nSubject: {{ $json.subject }}\\n\\nBody:\\n{{ $json.snippet }}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "classify",
+      "name": "Claude - Classify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300],
+      "credentials": {
+        "httpHeaderAuth": { "id": "fCB1tqIb4QhgN0cM", "name": "Groq API" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const intent = $input.first().json.choices[0].message.content.trim().toUpperCase();\nconst email = $('Gmail - New Email').item.json;\nreturn { intent, from: email.from.value[0].address, name: email.from.value[0].name, subject: email.subject, body: email.snippet || email.textPlain || '', threadId: email.threadId, messageId: email.id };"
+      },
+      "id": "merge-intent",
+      "name": "Merge Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            { "conditions": { "options": { "caseSensitive": false }, "conditions": [{ "leftValue": "={{ $json.intent }}", "rightValue": "PROPOSAL_REQUEST", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "proposal" },
+            { "conditions": { "options": { "caseSensitive": false }, "conditions": [{ "leftValue": "={{ $json.intent }}", "rightValue": "INTERESTED", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "interested" },
+            { "conditions": { "options": { "caseSensitive": false }, "conditions": [{ "leftValue": "={{ $json.intent }}", "rightValue": "QUESTION", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "question" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "route",
+      "name": "Route by Intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [920, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"max_tokens\": 1500,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Write a professional proposal email to {{ $json.name }} based on their inquiry: '{{ $json.body }}'. Include: (1) short intro, (2) understanding of their need, (3) 3 deliverables, (4) timeline (7 days), (5) price ($2,500 base), (6) call-to-action. Plain text email, no markdown.\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "claude-proposal",
+      "name": "Claude - Write Proposal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1160, 180],
+      "credentials": {
+        "httpHeaderAuth": { "id": "fCB1tqIb4QhgN0cM", "name": "Groq API" }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"max_tokens\": 500,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Write a warm 5-sentence reply to {{ $json.name }} who said they're interested. Ask 2 qualifying questions and propose a 15-min call this week. Their message: '{{ $json.body }}'\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "claude-interested",
+      "name": "Claude - Interested Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1160, 320],
+      "credentials": {
+        "httpHeaderAuth": { "id": "fCB1tqIb4QhgN0cM", "name": "Groq API" }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"max_tokens\": 500,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Answer this question helpfully and briefly (4-6 sentences). Tone: friendly expert. End by offering a free 15-min call. Question from {{ $json.name }}: '{{ $json.body }}'\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "claude-question",
+      "name": "Claude - Answer Question",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1160, 460],
+      "credentials": {
+        "httpHeaderAuth": { "id": "fCB1tqIb4QhgN0cM", "name": "Groq API" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.choices[0].message.content;\nconst orig = $('Merge Intent').item.json;\nreturn { to: orig.from, subject: 'Re: ' + orig.subject, body, threadId: orig.threadId, messageId: orig.messageId, intent: orig.intent };"
+      },
+      "id": "build-reply",
+      "name": "Build Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 300]
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.body }}",
+        "options": {
+          "sendTo": "={{ $json.to }}",
+          "threadId": "={{ $json.threadId }}"
+        }
+      },
+      "id": "gmail-draft",
+      "name": "Gmail - Create Draft",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1640, 300],
+      "credentials": {
+        "gmailOAuth2": { "id": "RE5KvrcKm8U95iWU", "name": "Gmail account" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "1aT0g84CkAuJpbrtlKGBP9xd3MbAjy1I6zrwBoBp2UuY",
+        "sheetName": "Sheet1",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ReceivedAt": "={{ $now.toISO() }}",
+            "From": "={{ $('Build Reply').item.json.to }}",
+            "Intent": "={{ $('Build Reply').item.json.intent }}",
+            "Subject": "={{ $('Build Reply').item.json.subject }}",
+            "DraftCreated": "Yes"
+          }
+        }
+      },
+      "id": "log-reply",
+      "name": "Log Reply",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [1880, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "wOf2eyzwI6cWNavo", "name": "Google Sheets account" }
+      }
+    }
+  ],
+  "connections": {
+    "Gmail - New Email": { "main": [[{ "node": "Claude - Classify", "type": "main", "index": 0 }]] },
+    "Claude - Classify": { "main": [[{ "node": "Merge Intent", "type": "main", "index": 0 }]] },
+    "Merge Intent": { "main": [[{ "node": "Route by Intent", "type": "main", "index": 0 }]] },
+    "Route by Intent": {
+      "main": [
+        [{ "node": "Claude - Write Proposal", "type": "main", "index": 0 }],
+        [{ "node": "Claude - Interested Reply", "type": "main", "index": 0 }],
+        [{ "node": "Claude - Answer Question", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude - Write Proposal": { "main": [[{ "node": "Build Reply", "type": "main", "index": 0 }]] },
+    "Claude - Interested Reply": { "main": [[{ "node": "Build Reply", "type": "main", "index": 0 }]] },
+    "Claude - Answer Question": { "main": [[{ "node": "Build Reply", "type": "main", "index": 0 }]] },
+    "Build Reply": { "main": [[{ "node": "Gmail - Create Draft", "type": "main", "index": 0 }]] },
+    "Gmail - Create Draft": { "main": [[{ "node": "Log Reply", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

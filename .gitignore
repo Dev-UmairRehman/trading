@@ -1,0 +1,25 @@
+# secrets — never commit
+.env
+*.env.local
+*.env
+
+# credential setup docs containing live OAuth secrets — never commit
+workflows/FINISH_OAUTH.md
+workflows/CREDENTIALS.md
+
+# dependencies
+node_modules/
+
+# n8n local data / runtime
+.n8n/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.log
+
+# generated exports
+public/exports/
+
+# OS noise
+Thumbs.db
+.DS_Store

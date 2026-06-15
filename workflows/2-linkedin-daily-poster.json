@@ -1,0 +1,118 @@
+{
+  "name": "2 - LinkedIn Daily Auto-Poster",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "trigger-daily",
+      "name": "Every Day 9AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const topics = [\n  'an AI automation that saved a client 20 hours/week',\n  'a contrarian take on AI replacing developers',\n  'a story about closing a $5K client with cold email',\n  'a tactical breakdown of an n8n workflow',\n  'a lesson learned from a failed automation project',\n  'why most AI agencies fail in year one',\n  'a behind-the-scenes look at building a SaaS MVP'\n];\nconst day = new Date().getDay();\nreturn { topic: topics[day % topics.length] };"
+      },
+      "id": "pick-topic",
+      "name": "Pick Topic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 800,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Write a LinkedIn post about: {{ $json.topic }}. Rules: Hook in line 1 (scroll-stopper). 150-220 words. Short punchy lines. One concrete example with numbers. End with a question. No emojis. No hashtags inside body — add 3 relevant hashtags on the last line.\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "claude-write-post",
+      "name": "Claude - Write Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const post = $input.first().json.content[0].text.trim();\nreturn { post };"
+      },
+      "id": "extract-post",
+      "name": "Extract Post",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.linkedin.com/v2/ugcPosts",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Restli-Protocol-Version", "value": "2.0.0" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"author\": \"urn:li:person:{{ $env.LINKEDIN_PERSON_ID }}\",\n  \"lifecycleState\": \"PUBLISHED\",\n  \"specificContent\": {\n    \"com.linkedin.ugc.ShareContent\": {\n      \"shareCommentary\": { \"text\": \"{{ $json.post.replace(/\\\"/g, '\\\\\\\"').replace(/\\n/g, '\\\\n') }}\" },\n      \"shareMediaCategory\": \"NONE\"\n    }\n  },\n  \"visibility\": { \"com.linkedin.ugc.MemberNetworkVisibility\": \"PUBLIC\" }\n}",
+        "options": {}
+      },
+      "id": "linkedin-post",
+      "name": "LinkedIn - Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1160, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "={{ $env.POSTS_SHEET_ID }}",
+        "sheetName": "Sheet1",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $now.toISO() }}",
+            "Topic": "={{ $('Pick Topic').item.json.topic }}",
+            "Post": "={{ $('Extract Post').item.json.post }}",
+            "Status": "Published"
+          }
+        }
+      },
+      "id": "log-post",
+      "name": "Log Post",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [1400, 300]
+    }
+  ],
+  "connections": {
+    "Every Day 9AM": { "main": [[{ "node": "Pick Topic", "type": "main", "index": 0 }]] },
+    "Pick Topic": { "main": [[{ "node": "Claude - Write Post", "type": "main", "index": 0 }]] },
+    "Claude - Write Post": { "main": [[{ "node": "Extract Post", "type": "main", "index": 0 }]] },
+    "Extract Post": { "main": [[{ "node": "LinkedIn - Post", "type": "main", "index": 0 }]] },
+    "LinkedIn - Post": { "main": [[{ "node": "Log Post", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

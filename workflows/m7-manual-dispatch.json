@@ -1,0 +1,232 @@
+{
+  "name": "M7 - Manual Follow-up Dispatcher",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "m7man0000000000000000000000000000000",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "m7sched00000000000000000000000000000",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Leads",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "=AND(NOT({replied}),{has_phone},NOT({manual_dispatched}),OR({email_status}='Completed',{contactability}='phone_only'))"
+            },
+            {
+              "name": "maxRecords",
+              "value": "25"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_PAT }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "m7get0000000000000000000000000000000",
+      "name": "Get Manual Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        240,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const recs = ($json.records) || [];\nreturn recs.map((r) => ({ json: { recordId: r.id, fields: r.fields } }));"
+      },
+      "id": "m7exp0000000000000000000000000000000",
+      "name": "Expand",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const f = $json.fields || {};\nconst msg = [\n  'Hi ' + (f.owner_name || 'there') + ', this is Rehman.',\n  'I help businesses like ' + (f.business_name || 'yours') + ' with their website and automating',\n  'lead handling. ' + (f.ai_findings ? 'I noticed: ' + f.ai_findings + '.' : '') ,\n  'Could I show you a quick idea? Takes 10 minutes.',\n].filter(Boolean).join(' ');\nconst body = [\n  'CALL/WHATSAPP THIS LEAD (no email reply).', '',\n  'Business: ' + (f.business_name || ''),\n  'Phone: ' + (f.phone || '(none)'),\n  'Email: ' + (f.email || '(none)'),\n  'Location: ' + (f.location || ''),\n  'Website: ' + (f.website || '(none)'),\n  'Lead score: ' + (f.lead_score || '') + '  |  Classification: ' + (f.classification || ''),\n  'Findings: ' + (f.ai_findings || ''),\n  '', 'Suggested opener:', msg,\n].join('\\n');\nreturn { json: { recordId: $json.recordId, subject: 'Call this lead: ' + (f.business_name || 'unknown'), body } };"
+      },
+      "id": "m7comp000000000000000000000000000000",
+      "name": "Compose",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.NOTIFY_EMAIL }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "m7mail000000000000000000000000000000",
+      "name": "Email Operator",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        900,
+        300
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "RE5KvrcKm8U95iWU",
+          "name": "Gmail account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Leads",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_PAT }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ typecast: true, records: [ { id: $('Compose').item.json.recordId, fields: { manual_dispatched: true, status: \"HandedOff\" } } ] }) }}",
+        "options": {}
+      },
+      "id": "m7upd0000000000000000000000000000000",
+      "name": "Mark Dispatched",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1120,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Manual Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Manual Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Manual Leads": {
+      "main": [
+        [
+          {
+            "node": "Expand",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand": {
+      "main": [
+        [
+          {
+            "node": "Compose",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose": {
+      "main": [
+        [
+          {
+            "node": "Email Operator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Operator": {
+      "main": [
+        [
+          {
+            "node": "Mark Dispatched",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "3sNPCA6YTlyT9Nno"
+  },
+  "pinData": {}
+}

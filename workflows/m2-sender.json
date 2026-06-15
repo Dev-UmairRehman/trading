@@ -1,0 +1,492 @@
+{
+  "name": "M2 - Outreach Sender",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "m2man0000000000000000000000000000000",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 10
+            }
+          ]
+        }
+      },
+      "id": "m2sched00000000000000000000000000000",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Config",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "maxRecords",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_PAT }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "m2cfg0000000000000000000000000000000",
+      "name": "Get Config",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        220,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "k1",
+              "leftValue": "={{ $json.records[0].fields.send_enabled }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        }
+      },
+      "id": "m2if00000000000000000000000000000000",
+      "name": "Send Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Leads",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "=IS_SAME({last_email_at},TODAY(),'day')"
+            },
+            {
+              "name": "fields[]",
+              "value": "place_id"
+            },
+            {
+              "name": "maxRecords",
+              "value": "100"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_PAT }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "m2cnt0000000000000000000000000000000",
+      "name": "Count Today",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        660,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "// lib/sendPlan.js — pure send-planning helpers.\nconst CADENCE_DAYS = { 1: 3, 2: 6, 3: 10 }; // days added AFTER sending stage N\nconst TEMPLATES = ['initial', 'followup1', 'followup2', 'followup3'];\n\nfunction remaining(cap, sentToday) {\n  return Math.max(0, (cap || 0) - (sentToday || 0));\n}\nfunction nextEmailAt(newStage, fromMs) {\n  const days = CADENCE_DAYS[newStage];\n  if (!days) return null; // stage 4 => done\n  return new Date(fromMs + days * 86400000).toISOString();\n}\nfunction stageToTemplate(currentStage) {\n  return TEMPLATES[currentStage] || null;\n}\n// Deterministic-by-seed delay in whole seconds within [min,max], for human-like sends.\nfunction jitterSeconds(min, max, seed) {\n  const lo = Math.max(0, Math.floor(min || 0));\n  const hi = Math.max(lo, Math.floor(max || 0));\n  const span = hi - lo + 1;\n  const s = Math.abs(Math.floor(seed || 0)) % span;\n  return lo + s;\n}\nconst cfg = ($('Get Config').item.json.records[0] || {}).fields || {};\nconst cap = (typeof cfg.daily_cap === 'number') ? cfg.daily_cap : 10;\nconst sentToday = (($json.records) || []).length;\nreturn { json: { remaining: remaining(cap, sentToday), cap, sentToday } };"
+      },
+      "id": "m2plan000000000000000000000000000000",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Leads",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "=AND(OR({classification}='Warm',{classification}='Hot'),NOT({replied}),{has_email},OR({email_stage}=BLANK(),{email_stage}<4),OR({email_stage}=BLANK(),{email_stage}=0,IS_BEFORE({next_email_at},NOW())))"
+            },
+            {
+              "name": "maxRecords",
+              "value": "={{ Math.max(1, $json.remaining) }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_PAT }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "m2due0000000000000000000000000000000",
+      "name": "Get Due Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1100,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const rem = ($('Plan').item.json.remaining) || 0;\nconst recs = (($json.records) || []).slice(0, rem);\nreturn recs.map((r) => ({ json: {\n  recordId: r.id,\n  stage: (typeof r.fields.email_stage === 'number' ? r.fields.email_stage : 0),\n  fields: r.fields,\n} }));"
+      },
+      "id": "m2exp0000000000000000000000000000000",
+      "name": "Expand",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// lib/emailCopy.js — pure: build stage-aware Groq prompt + parse {subject, body}. No network.\nconst STAGE_GUIDE = {\n  initial: 'First touch. Open with the SPECIFIC observation from the analysis. One concrete value offer. Soft CTA (a quick reply or 15-min call).',\n  followup1: 'Short bump (3 days later). New angle / second opportunity. 2-3 sentences. Reference the first email lightly.',\n  followup2: 'Value nudge (6 days later). One short proof point or mini case angle. Keep it brief.',\n  followup3: 'Breakup email (10 days later). Polite \"should I close your file?\" tone. Very short. Easy out.',\n};\nfunction buildEmailPrompt(lead, stage) {\n  const guide = STAGE_GUIDE[stage] || STAGE_GUIDE.initial;\n  const system = 'You write concise, human, non-spammy B2B cold emails for Rehman, who sells website '\n    + 'development, AI automation, and n8n automation to local businesses. Reply with ONLY JSON: '\n    + '{\"subject\":string,\"body\":string}. Plain text body, 4-6 short sentences max, no emojis, no '\n    + 'hypey words (free, guarantee, act now). Sign as \"Rehman\". Never invent facts about the business.';\n  const user = `Stage: ${stage}\\nGuidance: ${guide}\\n\\nBusiness: ${lead.business_name}\\n`\n    + `Type: ${lead.category || 'business'}\\nLocation: ${lead.location || ''}\\n`\n    + `Has website: ${lead.has_website ? 'yes (' + (lead.website || '') + ')' : 'NO website'}\\n`\n    + `Analysis findings: ${lead.ai_findings || 'n/a'}\\nWhy: ${lead.ai_rationale || ''}\\n\\n`\n    + 'Sign the email as Rehman. Write the JSON now.';\n  return [{ role: 'system', content: system }, { role: 'user', content: user }];\n}\nfunction parseEmail(content) {\n  const fb = { subject: '', body: '' };\n  if (!content) return fb;\n  let t = String(content).trim();\n  const f = t.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (f) t = f[1].trim();\n  const a = t.indexOf('{'), b = t.lastIndexOf('}');\n  if (a === -1 || b < a) return fb;\n  try {\n    const o = JSON.parse(t.slice(a, b + 1));\n    return { subject: typeof o.subject === 'string' ? o.subject : '', body: typeof o.body === 'string' ? o.body : '' };\n  } catch { return fb; }\n}\n// lib/sendPlan.js — pure send-planning helpers.\nconst CADENCE_DAYS = { 1: 3, 2: 6, 3: 10 }; // days added AFTER sending stage N\nconst TEMPLATES = ['initial', 'followup1', 'followup2', 'followup3'];\n\nfunction remaining(cap, sentToday) {\n  return Math.max(0, (cap || 0) - (sentToday || 0));\n}\nfunction nextEmailAt(newStage, fromMs) {\n  const days = CADENCE_DAYS[newStage];\n  if (!days) return null; // stage 4 => done\n  return new Date(fromMs + days * 86400000).toISOString();\n}\nfunction stageToTemplate(currentStage) {\n  return TEMPLATES[currentStage] || null;\n}\n// Deterministic-by-seed delay in whole seconds within [min,max], for human-like sends.\nfunction jitterSeconds(min, max, seed) {\n  const lo = Math.max(0, Math.floor(min || 0));\n  const hi = Math.max(lo, Math.floor(max || 0));\n  const span = hi - lo + 1;\n  const s = Math.abs(Math.floor(seed || 0)) % span;\n  return lo + s;\n}\nconst stage = $json.stage || 0;\nconst template = stageToTemplate(stage);\nconst messages = buildEmailPrompt($json.fields, template);\nreturn { json: { ...$json, template, messages } };"
+      },
+      "id": "m2pick000000000000000000000000000000",
+      "name": "Pick Stage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GROQ_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"llama-3.3-70b-versatile\", temperature: 0.4, response_format: { type: \"json_object\" }, messages: $json.messages }) }}",
+        "options": {}
+      },
+      "id": "m2groq000000000000000000000000000000",
+      "name": "Write Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1760,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// lib/emailCopy.js — pure: build stage-aware Groq prompt + parse {subject, body}. No network.\nconst STAGE_GUIDE = {\n  initial: 'First touch. Open with the SPECIFIC observation from the analysis. One concrete value offer. Soft CTA (a quick reply or 15-min call).',\n  followup1: 'Short bump (3 days later). New angle / second opportunity. 2-3 sentences. Reference the first email lightly.',\n  followup2: 'Value nudge (6 days later). One short proof point or mini case angle. Keep it brief.',\n  followup3: 'Breakup email (10 days later). Polite \"should I close your file?\" tone. Very short. Easy out.',\n};\nfunction buildEmailPrompt(lead, stage) {\n  const guide = STAGE_GUIDE[stage] || STAGE_GUIDE.initial;\n  const system = 'You write concise, human, non-spammy B2B cold emails for Rehman, who sells website '\n    + 'development, AI automation, and n8n automation to local businesses. Reply with ONLY JSON: '\n    + '{\"subject\":string,\"body\":string}. Plain text body, 4-6 short sentences max, no emojis, no '\n    + 'hypey words (free, guarantee, act now). Sign as \"Rehman\". Never invent facts about the business.';\n  const user = `Stage: ${stage}\\nGuidance: ${guide}\\n\\nBusiness: ${lead.business_name}\\n`\n    + `Type: ${lead.category || 'business'}\\nLocation: ${lead.location || ''}\\n`\n    + `Has website: ${lead.has_website ? 'yes (' + (lead.website || '') + ')' : 'NO website'}\\n`\n    + `Analysis findings: ${lead.ai_findings || 'n/a'}\\nWhy: ${lead.ai_rationale || ''}\\n\\n`\n    + 'Sign the email as Rehman. Write the JSON now.';\n  return [{ role: 'system', content: system }, { role: 'user', content: user }];\n}\nfunction parseEmail(content) {\n  const fb = { subject: '', body: '' };\n  if (!content) return fb;\n  let t = String(content).trim();\n  const f = t.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (f) t = f[1].trim();\n  const a = t.indexOf('{'), b = t.lastIndexOf('}');\n  if (a === -1 || b < a) return fb;\n  try {\n    const o = JSON.parse(t.slice(a, b + 1));\n    return { subject: typeof o.subject === 'string' ? o.subject : '', body: typeof o.body === 'string' ? o.body : '' };\n  } catch { return fb; }\n}\n// lib/sendPlan.js — pure send-planning helpers.\nconst CADENCE_DAYS = { 1: 3, 2: 6, 3: 10 }; // days added AFTER sending stage N\nconst TEMPLATES = ['initial', 'followup1', 'followup2', 'followup3'];\n\nfunction remaining(cap, sentToday) {\n  return Math.max(0, (cap || 0) - (sentToday || 0));\n}\nfunction nextEmailAt(newStage, fromMs) {\n  const days = CADENCE_DAYS[newStage];\n  if (!days) return null; // stage 4 => done\n  return new Date(fromMs + days * 86400000).toISOString();\n}\nfunction stageToTemplate(currentStage) {\n  return TEMPLATES[currentStage] || null;\n}\n// Deterministic-by-seed delay in whole seconds within [min,max], for human-like sends.\nfunction jitterSeconds(min, max, seed) {\n  const lo = Math.max(0, Math.floor(min || 0));\n  const hi = Math.max(lo, Math.floor(max || 0));\n  const span = hi - lo + 1;\n  const s = Math.abs(Math.floor(seed || 0)) % span;\n  return lo + s;\n}\nconst prev = $('Pick Stage').item.json;\nconst e = parseEmail($json.choices && $json.choices[0] && $json.choices[0].message ? $json.choices[0].message.content : '');\nconst subject = e.subject || ('Quick idea for ' + (prev.fields.business_name || 'your business'));\nconst body = e.body || '';\nconst newStage = (prev.stage || 0) + 1;\nconst nowMs = Date.now();\nreturn { json: {\n  recordId: prev.recordId, email: prev.fields.email || '',\n  subject, body, newStage,\n  nowIso: new Date(nowMs).toISOString(), nextIso: nextEmailAt(newStage, nowMs),\n} };"
+      },
+      "id": "m2parse00000000000000000000000000000",
+      "name": "Parse Copy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "amount": "={{ (function(){ var s=$itemIndex||0; return 20 + (Math.abs(s*37+13)%70); })() }}",
+        "unit": "seconds"
+      },
+      "id": "m2wait000000000000000000000000000000",
+      "name": "Throttle",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2090,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "m2gmail00000000000000000000000000000",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2200,
+        300
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "RE5KvrcKm8U95iWU",
+          "name": "Gmail account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Leads",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_PAT }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ typecast: true, records: [ { id: $('Parse Copy').item.json.recordId, fields: { email_stage: $('Parse Copy').item.json.newStage, last_email_at: $('Parse Copy').item.json.nowIso, next_email_at: $('Parse Copy').item.json.nextIso, email_status: ($('Parse Copy').item.json.newStage >= 4 ? \"Completed\" : \"Sent\"), last_email_subject: $('Parse Copy').item.json.subject, last_email_body: $('Parse Copy').item.json.body } } ] }) }}",
+        "options": {}
+      },
+      "id": "m2upd0000000000000000000000000000000",
+      "name": "Update Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2420,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Config": {
+      "main": [
+        [
+          {
+            "node": "Send Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Count Today",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Count Today": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Get Due Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Due Leads": {
+      "main": [
+        [
+          {
+            "node": "Expand",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand": {
+      "main": [
+        [
+          {
+            "node": "Pick Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Stage": {
+      "main": [
+        [
+          {
+            "node": "Write Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Email": {
+      "main": [
+        [
+          {
+            "node": "Parse Copy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Copy": {
+      "main": [
+        [
+          {
+            "node": "Throttle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Throttle": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email": {
+      "main": [
+        [
+          {
+            "node": "Update Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "3sNPCA6YTlyT9Nno"
+  },
+  "pinData": {}
+}

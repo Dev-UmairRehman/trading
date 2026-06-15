@@ -1,0 +1,12 @@
+{
+  "name": "leadgen-n8n",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test",
+    "build:m1": "node build-m1-workflow.js workflows/m1-lead-analysis.json",
+    "airtable:setup": "node scripts/create-airtable-tables.js",
+    "push:m1": "node scripts/push-workflow.js workflows/m1-lead-analysis.json"
+  }
+}

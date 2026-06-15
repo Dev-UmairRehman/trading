@@ -1,0 +1,562 @@
+{
+  "name": "M1 - Lead Analysis Pipeline",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-10000000000000000000000000000",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "sched-100000000000000000000000000000",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// lib/targets.js — rotating global outreach targets. Pure, date-seeded.\nconst BUSINESS_TYPES = [\n  'dentist', 'orthodontist', 'med spa', 'cosmetic clinic', 'law firm',\n  'personal injury lawyer', 'immigration lawyer', 'roofing company', 'HVAC company',\n  'solar installer', 'plumber', 'real estate agency', 'physiotherapy clinic',\n  'veterinary clinic', 'accounting firm', 'financial advisor', 'insurance broker',\n  'fitness studio', 'yoga studio', 'dermatology clinic',\n];\nconst CITIES = [\n  'New York', 'Los Angeles', 'Chicago', 'Toronto', 'Vancouver', 'London',\n  'Manchester', 'Dublin', 'Sydney', 'Melbourne', 'Auckland', 'Dubai',\n  'Singapore', 'Amsterdam',\n];\n// 1-based day of year (UTC), stable across a run.\nfunction dayIndex(date) {\n  const startOfYear = Date.UTC(date.getUTCFullYear(), 0, 0);\n  const today = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());\n  return Math.floor((today - startOfYear) / 86400000);\n}\n// Rotate business type fastest; advance city after a full type cycle.\nfunction pickTarget(index) {\n  const i = Math.abs(Math.floor(index || 0));\n  const businessType = BUSINESS_TYPES[i % BUSINESS_TYPES.length];\n  const city = CITIES[Math.floor(i / BUSINESS_TYPES.length) % CITIES.length];\n  return { textQuery: `${businessType} in ${city}`, businessType, city };\n}\nconst idx = dayIndex(new Date());\nconst t = pickTarget(idx);\nreturn { json: { textQuery: t.textQuery, maxResultCount: 5, businessType: t.businessType, city: t.city } };"
+      },
+      "id": "cfg-10000000000000000000000000000000",
+      "name": "Set Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://places.googleapis.com/v1/places:searchText",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Goog-Api-Key",
+              "value": "={{ $env.GOOGLE_API_KEY }}"
+            },
+            {
+              "name": "X-Goog-FieldMask",
+              "value": "places.id,places.displayName,places.websiteUri,places.nationalPhoneNumber,places.userRatingCount,places.rating,places.formattedAddress,places.types"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ textQuery: $json.textQuery, maxResultCount: $json.maxResultCount }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "places-10000000000000000000000000000",
+      "name": "Places Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        460,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "// lib/placesParser.js\n// Pure normalization of Google Places API (New) responses.\nfunction parsePlace(place) {\n  const p = place || {};\n  const website = p.websiteUri || '';\n  return {\n    business_name: (p.displayName && p.displayName.text) || '',\n    place_id: p.id || '',\n    website,\n    phone: p.nationalPhoneNumber || p.internationalPhoneNumber || '',\n    review_count: typeof p.userRatingCount === 'number' ? p.userRatingCount : 0,\n    rating: typeof p.rating === 'number' ? p.rating : null,\n    category: Array.isArray(p.types) && p.types.length ? p.types[0] : '',\n    location: p.formattedAddress || '',\n    has_website: Boolean(website),\n  };\n}\n\nfunction flagMultipleLocations(places) {\n  const counts = new Map();\n  for (const p of places || []) {\n    const name = ((p.displayName && p.displayName.text) || '').trim().toLowerCase();\n    if (!name) continue;\n    counts.set(name, (counts.get(name) || 0) + 1);\n  }\n  const repeated = new Set();\n  for (const [name, n] of counts) if (n >= 2) repeated.add(name);\n  return repeated;\n}\nconst resp = $input.first().json;\nconst places = Array.isArray(resp.places) ? resp.places : [];\nconst multi = flagMultipleLocations(places);\nreturn places.map((pl) => {\n  const lead = parsePlace(pl);\n  lead.lead_source = 'google_places';\n  lead.multipleLocations = multi.has((lead.business_name || '').trim().toLowerCase());\n  return { json: lead };\n});"
+      },
+      "id": "norm-1000000000000000000000000000000",
+      "name": "Normalize+Flag",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.has_website }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        }
+      },
+      "id": "if-100000000000000000000000000000000",
+      "name": "Has Website?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/pagespeedonline/v5/runPagespeed",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.website }}"
+            },
+            {
+              "name": "strategy",
+              "value": "mobile"
+            },
+            {
+              "name": "category",
+              "value": "performance"
+            },
+            {
+              "name": "category",
+              "value": "seo"
+            },
+            {
+              "name": "key",
+              "value": "={{ $env.GOOGLE_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "ps-100000000000000000000000000000000",
+      "name": "PageSpeed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1120,
+        200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 8000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.website }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "html-1000000000000000000000000000000",
+      "name": "Fetch HTML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1340,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// lib/htmlSignals.js\n// Pure HTML signal extraction. No network, no DOM — regex over a string.\nconst SOCIAL_HOSTS = ['facebook.com', 'instagram.com', 'twitter.com', 'x.com', 'linkedin.com', 'tiktok.com', 'youtube.com'];\n\nfunction extractHtmlSignals(html, finalUrl) {\n  const h = String(html || '');\n  const lower = h.toLowerCase();\n\n  const hasTitle = /<title[^>]*>\\s*\\S/i.test(h);\n  const hasMetaDescription = /<meta[^>]+name=[\"']description[\"'][^>]*>/i.test(h);\n  const hasViewport = /<meta[^>]+name=[\"']viewport[\"'][^>]*>/i.test(h);\n  const hasH1 = /<h1[\\s>]/i.test(h);\n  const hasContactForm = /<form[\\s>]/i.test(h);\n  const hasSSL = String(finalUrl || '').toLowerCase().startsWith('https://');\n\n  const socialLinks = [];\n  const hrefRe = /href=[\"']([^\"']+)[\"']/gi;\n  let m;\n  while ((m = hrefRe.exec(h)) !== null) {\n    const url = m[1];\n    if (SOCIAL_HOSTS.some((host) => url.toLowerCase().includes(host)) && !socialLinks.includes(url)) {\n      socialLinks.push(url);\n    }\n  }\n\n  let copyrightYear = null;\n  const yearRe = /(?:©|&copy;|copyright)\\s*[^0-9]{0,8}((?:19|20)\\d{2})/gi;\n  while ((m = yearRe.exec(lower)) !== null) {\n    const y = parseInt(m[1], 10);\n    if (copyrightYear === null || y > copyrightYear) copyrightYear = y;\n  }\n\n  // De-obfuscate common \"name (at) domain (dot) com\" patterns before scanning.\n  const deob = h\n    .replace(/\\s*[([]\\s*at\\s*[)\\]]\\s*/gi, '@')\n    .replace(/\\s*[([]\\s*dot\\s*[)\\]]\\s*/gi, '.');\n  const found = [];\n  const emailRe = /[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}/gi;\n  while ((m = emailRe.exec(deob)) !== null) {\n    const e = m[0].toLowerCase();\n    if (!e.endsWith('.png') && !e.endsWith('.jpg') && !e.endsWith('.gif') && !e.endsWith('.webp') && !found.includes(e)) found.push(e);\n  }\n  // Prioritize role-based mailboxes (best for cold outreach); stable otherwise.\n  const ROLE = /^(info|contact|hello|enquiries|enquiry|office|admin|sales|support|reception)@/i;\n  const emails = found.slice().sort((a, b) => (ROLE.test(b) ? 1 : 0) - (ROLE.test(a) ? 1 : 0));\n\n  return { hasTitle, hasMetaDescription, hasViewport, hasH1, hasContactForm, hasSSL, socialLinks, copyrightYear, emails };\n}\n// lib/aiReview.js\n// Pure: build the Groq prompt and parse its JSON reply. No network here.\nfunction buildReviewPrompt(lead, htmlSnippet) {\n  const system = 'You are a web/automation consultant. Reply with ONLY a JSON object, no prose. '\n    + 'Schema: {\"outdated\":boolean,\"opportunities\":string[],\"missingLeadCapture\":string[],\"summary\":string}. '\n    + '\"outdated\" = is the site visually/technically dated. \"opportunities\" = automation/AI wins (max 4). '\n    + '\"missingLeadCapture\" = absent ways to capture leads. \"summary\" = one sentence.';\n  const user = `Business: ${lead.business_name || 'Unknown'}\\nWebsite: ${lead.website || 'NONE'}\\n`\n    + `HTML excerpt (truncated):\\n${String(htmlSnippet || '').slice(0, 4000)}\\n\\n`\n    + 'Return the JSON now.';\n  return [{ role: 'system', content: system }, { role: 'user', content: user }];\n}\n\nfunction parseReview(content) {\n  const fallback = { outdated: false, opportunities: [], missingLeadCapture: [], summary: '' };\n  if (!content) return fallback;\n  let text = String(content).trim();\n  const fence = text.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (fence) text = fence[1].trim();\n  const start = text.indexOf('{');\n  const end = text.lastIndexOf('}');\n  if (start === -1 || end === -1 || end < start) return fallback;\n  try {\n    const obj = JSON.parse(text.slice(start, end + 1));\n    return {\n      outdated: Boolean(obj.outdated),\n      opportunities: Array.isArray(obj.opportunities) ? obj.opportunities : [],\n      missingLeadCapture: Array.isArray(obj.missingLeadCapture) ? obj.missingLeadCapture : [],\n      summary: typeof obj.summary === 'string' ? obj.summary : '',\n    };\n  } catch {\n    return fallback;\n  }\n}\nconst lead = $('Normalize+Flag').item.json;\nconst html = $json.data || $json.body || '';\nconst finalUrl = lead.website || '';\nlet pagespeed = null;\ntry {\n  const ps = $('PageSpeed').item.json;\n  const cats = ps.lighthouseResult && ps.lighthouseResult.categories;\n  if (cats) pagespeed = {\n    mobilePerf: Math.round((cats.performance && typeof cats.performance.score === 'number' ? cats.performance.score : 0.5) * 100),\n    seo: Math.round((cats.seo && typeof cats.seo.score === 'number' ? cats.seo.score : 0.7) * 100),\n  };\n} catch (e) { pagespeed = null; }\nconst sig = extractHtmlSignals(html, finalUrl);\nconst htmlRaw = String(html).slice(0, 4000);\nconst messages = buildReviewPrompt(lead, htmlRaw);\nreturn { json: { ...lead, html: sig, htmlRaw, pagespeed, messages } };"
+      },
+      "id": "hsig-1000000000000000000000000000000",
+      "name": "HTML Signals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GROQ_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"llama-3.3-70b-versatile\", temperature: 0.2, response_format: { type: \"json_object\" }, messages: $json.messages }) }}",
+        "options": {}
+      },
+      "id": "groq-1000000000000000000000000000000",
+      "name": "Groq Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1780,
+        200
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// lib/aiReview.js\n// Pure: build the Groq prompt and parse its JSON reply. No network here.\nfunction buildReviewPrompt(lead, htmlSnippet) {\n  const system = 'You are a web/automation consultant. Reply with ONLY a JSON object, no prose. '\n    + 'Schema: {\"outdated\":boolean,\"opportunities\":string[],\"missingLeadCapture\":string[],\"summary\":string}. '\n    + '\"outdated\" = is the site visually/technically dated. \"opportunities\" = automation/AI wins (max 4). '\n    + '\"missingLeadCapture\" = absent ways to capture leads. \"summary\" = one sentence.';\n  const user = `Business: ${lead.business_name || 'Unknown'}\\nWebsite: ${lead.website || 'NONE'}\\n`\n    + `HTML excerpt (truncated):\\n${String(htmlSnippet || '').slice(0, 4000)}\\n\\n`\n    + 'Return the JSON now.';\n  return [{ role: 'system', content: system }, { role: 'user', content: user }];\n}\n\nfunction parseReview(content) {\n  const fallback = { outdated: false, opportunities: [], missingLeadCapture: [], summary: '' };\n  if (!content) return fallback;\n  let text = String(content).trim();\n  const fence = text.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (fence) text = fence[1].trim();\n  const start = text.indexOf('{');\n  const end = text.lastIndexOf('}');\n  if (start === -1 || end === -1 || end < start) return fallback;\n  try {\n    const obj = JSON.parse(text.slice(start, end + 1));\n    return {\n      outdated: Boolean(obj.outdated),\n      opportunities: Array.isArray(obj.opportunities) ? obj.opportunities : [],\n      missingLeadCapture: Array.isArray(obj.missingLeadCapture) ? obj.missingLeadCapture : [],\n      summary: typeof obj.summary === 'string' ? obj.summary : '',\n    };\n  } catch {\n    return fallback;\n  }\n}\nconst prev = $('HTML Signals').item.json;\nconst content = $json.choices && $json.choices[0] && $json.choices[0].message ? $json.choices[0].message.content : '';\nconst ai = parseReview(content);\nreturn { json: { ...prev, ai } };"
+      },
+      "id": "pai-10000000000000000000000000000000",
+      "name": "Parse AI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const lead = $json;\nreturn { json: { ...lead, html: null, ai: { outdated: false, opportunities: [], missingLeadCapture: [], summary: 'No website found.' }, pagespeed: null } };"
+      },
+      "id": "nosite-10000000000000000000000000000",
+      "name": "No-site Defaults",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 2
+      },
+      "id": "merge-100000000000000000000000000000",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// lib/scoring.js\n// Pure scoring. `signals` is fully pre-extracted; `currentYear` injected for testability.\nconst LARGE_BUSINESS_REVIEWS = 100;\nconst OUTDATED_YEAR_GAP = 3; // copyright older than (currentYear - 3) => outdated\n\nfunction isOutdated(html, aiOutdated, currentYear) {\n  if (aiOutdated) return true;\n  if (!html) return false;\n  if (!html.hasViewport) return true;\n  if (!html.hasSSL) return true;\n  if (html.copyrightYear && html.copyrightYear < currentYear - OUTDATED_YEAR_GAP) return true;\n  return false;\n}\n\nfunction isPoorSeo(html, pagespeed) {\n  if (!html) return false; // handled by no-website branch\n  const missingBasics = !html.hasTitle || !html.hasMetaDescription || !html.hasH1;\n  const lowScore = pagespeed && typeof pagespeed.seo === 'number' && pagespeed.seo < 70;\n  return Boolean(missingBasics || lowScore);\n}\n\nfunction isPoorMobile(html, pagespeed) {\n  if (!html) return false;\n  const noViewport = !html.hasViewport;\n  const lowPerf = pagespeed && typeof pagespeed.mobilePerf === 'number' && pagespeed.mobilePerf < 70;\n  return Boolean(noViewport || lowPerf);\n}\n\nfunction computeWebsiteScore(html, pagespeed) {\n  if (!html) return 0;\n  let score = 0;\n  const mobile = pagespeed && typeof pagespeed.mobilePerf === 'number' ? pagespeed.mobilePerf : 50;\n  score += 0.40 * mobile;                     // 40% performance\n  score += html.hasViewport ? 15 : 0;         // 15% mobile-ready\n  score += html.hasSSL ? 10 : 0;              // 10% SSL\n  const seoBasics = [html.hasTitle, html.hasMetaDescription, html.hasH1].filter(Boolean).length;\n  score += (seoBasics / 3) * 20;              // 20% SEO basics\n  score += html.hasContactForm ? 15 : 0;      // 15% lead capture\n  return Math.round(Math.min(100, score));\n}\n\n// Continuous 0-100 opportunity score. Anchored on how much the site needs work\n// (inverse of website_score, which varies), blended with AI-identified wins and\n// the business's reach (review volume). Discriminates instead of saturating.\nfunction computeAutomationScore(signals, websiteScore) {\n  if (!signals.hasWebsite) return 90; // no site = maximum build + automation opportunity\n  const ops = Math.min(Array.isArray(signals.aiOpportunities) ? signals.aiOpportunities.length : 0, 5);\n  const reviews = Math.min(signals.reviewCount || 0, 500);\n  const siteNeed = 100 - websiteScore;        // worse site => more opportunity\n  const opsScore = (ops / 5) * 100;           // AI-identified wins, normalized\n  const reachScore = (reviews / 500) * 100;   // busier business => more value\n  let score = 0.55 * siteNeed + 0.25 * opsScore + 0.20 * reachScore;\n  if (!signals.html || !signals.html.hasContactForm) score += 3; // small structural nudges\n  if (!signals.hasSocial) score += 2;\n  return Math.round(Math.max(0, Math.min(100, score)));\n}\n\nfunction classify(leadScore) {\n  if (leadScore >= 70) return 'Hot';\n  if (leadScore >= 40) return 'Warm';\n  return 'Cold';\n}\n\nfunction computeScores(signals, currentYear) {\n  const s = signals || {};\n  let lead = 0;\n  if (!s.hasWebsite) {\n    lead += 25;       // no website\n    lead += 15;       // poor SEO (none exists)\n    lead += 15;       // poor mobile (none exists)\n  } else {\n    if (isOutdated(s.html, s.aiOutdated, currentYear)) lead += 20;\n    if (isPoorSeo(s.html, s.pagespeed)) lead += 15;\n    if (isPoorMobile(s.html, s.pagespeed)) lead += 15;\n  }\n  if (s.reviewCount >= LARGE_BUSINESS_REVIEWS) lead += 10; // large business\n  if (s.hasSocial) lead += 5;                              // active social\n  if (s.multipleLocations) lead += 10;                     // multiple locations\n\n  const lead_score = Math.min(100, lead);\n  const website_score = computeWebsiteScore(s.html, s.pagespeed);\n  return {\n    website_score,\n    automation_score: computeAutomationScore(s, website_score),\n    lead_score,\n    classification: classify(lead_score),\n  };\n}\nconst d = $json;\nconst pagespeed = d.pagespeed || null;\nconst signals = {\n  hasWebsite: Boolean(d.has_website),\n  html: d.html || null,\n  pagespeed,\n  reviewCount: d.review_count || 0,\n  hasSocial: Boolean(d.html && d.html.socialLinks && d.html.socialLinks.length) ,\n  multipleLocations: Boolean(d.multipleLocations),\n  aiOutdated: Boolean(d.ai && d.ai.outdated),\n  aiOpportunities: (d.ai && d.ai.opportunities) || [],\n  aiMissingLeadCapture: (d.ai && d.ai.missingLeadCapture) || [],\n};\nconst year = new Date().getFullYear();\nconst scores = computeScores(signals, year);\nconst rationale = [\n  d.ai && d.ai.summary,\n  'Opportunities: ' + ((d.ai && d.ai.opportunities) || []).join(', '),\n  'Conversion estimate: ' + (scores.classification === 'Hot' ? 'high' : scores.classification === 'Warm' ? 'medium' : 'low'),\n  'Next action: ' + (scores.classification === 'Cold' ? 'store only' : 'queue for email outreach'),\n].filter(Boolean).join('\\n');\nreturn { json: { ...d, ...scores, has_social: signals.hasSocial, ai_findings: ((d.ai && d.ai.opportunities) || []).join('; '), ai_rationale: rationale } };"
+      },
+      "id": "comp-1000000000000000000000000000000",
+      "name": "Compute Scores",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/people/match",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Api-Key",
+              "value": "={{ $env.APOLLO_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ domain: ($json.website || \"\").replace(/^https?:\\\\/\\\\//,\"\").replace(/\\\\/.*$/,\"\") }) }}",
+        "options": {}
+      },
+      "id": "apollo-10000000000000000000000000000",
+      "name": "Apollo Enrich",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2660,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// lib/scoring.js\n// Pure scoring. `signals` is fully pre-extracted; `currentYear` injected for testability.\nconst LARGE_BUSINESS_REVIEWS = 100;\nconst OUTDATED_YEAR_GAP = 3; // copyright older than (currentYear - 3) => outdated\n\nfunction isOutdated(html, aiOutdated, currentYear) {\n  if (aiOutdated) return true;\n  if (!html) return false;\n  if (!html.hasViewport) return true;\n  if (!html.hasSSL) return true;\n  if (html.copyrightYear && html.copyrightYear < currentYear - OUTDATED_YEAR_GAP) return true;\n  return false;\n}\n\nfunction isPoorSeo(html, pagespeed) {\n  if (!html) return false; // handled by no-website branch\n  const missingBasics = !html.hasTitle || !html.hasMetaDescription || !html.hasH1;\n  const lowScore = pagespeed && typeof pagespeed.seo === 'number' && pagespeed.seo < 70;\n  return Boolean(missingBasics || lowScore);\n}\n\nfunction isPoorMobile(html, pagespeed) {\n  if (!html) return false;\n  const noViewport = !html.hasViewport;\n  const lowPerf = pagespeed && typeof pagespeed.mobilePerf === 'number' && pagespeed.mobilePerf < 70;\n  return Boolean(noViewport || lowPerf);\n}\n\nfunction computeWebsiteScore(html, pagespeed) {\n  if (!html) return 0;\n  let score = 0;\n  const mobile = pagespeed && typeof pagespeed.mobilePerf === 'number' ? pagespeed.mobilePerf : 50;\n  score += 0.40 * mobile;                     // 40% performance\n  score += html.hasViewport ? 15 : 0;         // 15% mobile-ready\n  score += html.hasSSL ? 10 : 0;              // 10% SSL\n  const seoBasics = [html.hasTitle, html.hasMetaDescription, html.hasH1].filter(Boolean).length;\n  score += (seoBasics / 3) * 20;              // 20% SEO basics\n  score += html.hasContactForm ? 15 : 0;      // 15% lead capture\n  return Math.round(Math.min(100, score));\n}\n\n// Continuous 0-100 opportunity score. Anchored on how much the site needs work\n// (inverse of website_score, which varies), blended with AI-identified wins and\n// the business's reach (review volume). Discriminates instead of saturating.\nfunction computeAutomationScore(signals, websiteScore) {\n  if (!signals.hasWebsite) return 90; // no site = maximum build + automation opportunity\n  const ops = Math.min(Array.isArray(signals.aiOpportunities) ? signals.aiOpportunities.length : 0, 5);\n  const reviews = Math.min(signals.reviewCount || 0, 500);\n  const siteNeed = 100 - websiteScore;        // worse site => more opportunity\n  const opsScore = (ops / 5) * 100;           // AI-identified wins, normalized\n  const reachScore = (reviews / 500) * 100;   // busier business => more value\n  let score = 0.55 * siteNeed + 0.25 * opsScore + 0.20 * reachScore;\n  if (!signals.html || !signals.html.hasContactForm) score += 3; // small structural nudges\n  if (!signals.hasSocial) score += 2;\n  return Math.round(Math.max(0, Math.min(100, score)));\n}\n\nfunction classify(leadScore) {\n  if (leadScore >= 70) return 'Hot';\n  if (leadScore >= 40) return 'Warm';\n  return 'Cold';\n}\n\nfunction computeScores(signals, currentYear) {\n  const s = signals || {};\n  let lead = 0;\n  if (!s.hasWebsite) {\n    lead += 25;       // no website\n    lead += 15;       // poor SEO (none exists)\n    lead += 15;       // poor mobile (none exists)\n  } else {\n    if (isOutdated(s.html, s.aiOutdated, currentYear)) lead += 20;\n    if (isPoorSeo(s.html, s.pagespeed)) lead += 15;\n    if (isPoorMobile(s.html, s.pagespeed)) lead += 15;\n  }\n  if (s.reviewCount >= LARGE_BUSINESS_REVIEWS) lead += 10; // large business\n  if (s.hasSocial) lead += 5;                              // active social\n  if (s.multipleLocations) lead += 10;                     // multiple locations\n\n  const lead_score = Math.min(100, lead);\n  const website_score = computeWebsiteScore(s.html, s.pagespeed);\n  return {\n    website_score,\n    automation_score: computeAutomationScore(s, website_score),\n    lead_score,\n    classification: classify(lead_score),\n  };\n}\n// lib/contactability.js — route a lead by what we can reach it on. Pure.\nfunction deriveContactability(hasEmail, hasPhone) {\n  if (hasEmail && hasPhone) return 'both';\n  if (hasEmail) return 'email_only';\n  if (hasPhone) return 'phone_only';\n  return 'none';\n}\nfunction contactabilityBoost(route) {\n  if (route === 'both') return 15;\n  if (route === 'email_only') return 8;\n  if (route === 'phone_only') return 5;\n  return 0;\n}\nconst d = $('Compute Scores').item.json;\nconst enrich = $json || {};\nconst person = (enrich.person) || (Array.isArray(enrich.matches) ? enrich.matches[0] : null) || {};\nconst scrapedEmail = (d.html && Array.isArray(d.html.emails) && d.html.emails[0]) || '';\nconst email = person.email || scrapedEmail || '';   // Apollo first, site-scrape fallback\nconst owner = [person.first_name, person.last_name].filter(Boolean).join(' ');\nconst route = deriveContactability(Boolean(email), Boolean(d.phone));\nconst lead_score = Math.min(100, (d.lead_score || 0) + contactabilityBoost(route));\nconst classification = classify(lead_score);\nreturn { json: { place_id: d.place_id, fields: {\n  business_name: d.business_name, place_id: d.place_id, owner_name: owner || '',\n  email, phone: d.phone || '', website: d.website || '', category: d.category || '',\n  location: d.location || '', lead_source: 'google_places', has_website: Boolean(d.has_website),\n  review_count: d.review_count || 0, website_score: d.website_score, automation_score: d.automation_score,\n  lead_score, classification, contactability: route,\n  pagespeed_mobile: d.pagespeed && typeof d.pagespeed.mobilePerf === 'number' ? d.pagespeed.mobilePerf : null,\n  ai_findings: d.ai_findings || '', ai_rationale: d.ai_rationale || '',\n  has_email: Boolean(email), has_phone: Boolean(d.phone), has_social: Boolean(d.has_social),\n  status: 'New',\n} } };"
+      },
+      "id": "asm-10000000000000000000000000000000",
+      "name": "Assemble Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Leads",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_PAT }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ performUpsert: { fieldsToMergeOn: [\"place_id\"] }, typecast: true, records: [ { fields: $json.fields } ] }) }}",
+        "options": {}
+      },
+      "id": "air-10000000000000000000000000000000",
+      "name": "Airtable Upsert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3100,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Config": {
+      "main": [
+        [
+          {
+            "node": "Places Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Places Search": {
+      "main": [
+        [
+          {
+            "node": "Normalize+Flag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize+Flag": {
+      "main": [
+        [
+          {
+            "node": "Has Website?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Website?": {
+      "main": [
+        [
+          {
+            "node": "PageSpeed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No-site Defaults",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PageSpeed": {
+      "main": [
+        [
+          {
+            "node": "Fetch HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch HTML": {
+      "main": [
+        [
+          {
+            "node": "HTML Signals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML Signals": {
+      "main": [
+        [
+          {
+            "node": "Groq Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Review": {
+      "main": [
+        [
+          {
+            "node": "Parse AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No-site Defaults": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Compute Scores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Scores": {
+      "main": [
+        [
+          {
+            "node": "Apollo Enrich",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo Enrich": {
+      "main": [
+        [
+          {
+            "node": "Assemble Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Record": {
+      "main": [
+        [
+          {
+            "node": "Airtable Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

@@ -1,0 +1,157 @@
+{
+  "name": "Google Maps Email Scraper (Apify Leads)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "11111111-1111-1111-1111-111111111111",
+      "name": "Run / Execute Workflow",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-160, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "searchTerm",
+              "value": "dentist",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "locationQuery",
+              "value": "Amsterdam, Netherlands",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "maxResults",
+              "value": 50,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "22222222-2222-2222-2222-222222222222",
+      "name": "Search Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [60, 300],
+      "notes": "Edit these to control what gets scraped. searchTerm = niche, locationQuery = city/area, maxResults = max places per search."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/lukaskrivka~google-maps-with-contact-details/run-sync-get-dataset-items",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "token",
+              "value": "={{ $env.APIFY_API_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ searchStringsArray: [$json.searchTerm], locationQuery: $json.locationQuery, maxCrawledPlacesPerSearch: $json.maxResults, language: 'en', scrapePlaceDetailPage: true }) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "33333333-3333-3333-3333-333333333333",
+      "name": "Apify - Google Maps Email Extractor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [280, 300],
+      "notes": "Runs the free Apify actor lukaskrivka/google-maps-with-contact-details synchronously and returns the scraped places (with emails) as items. run-sync has a 5 min server limit; keep maxResults modest."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "f1",
+              "leftValue": "={{ ($json.emails || []).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "44444444-4444-4444-4444-444444444444",
+      "name": "Has Email?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [500, 300],
+      "notes": "Keeps only places that have at least one email address."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Explode each place into one lead row per email and keep clean fields.\nconst out = [];\nfor (const item of $input.all()) {\n  const d = item.json;\n  const emails = Array.isArray(d.emails) ? d.emails : (d.email ? [d.email] : []);\n  for (const email of emails) {\n    out.push({\n      json: {\n        companyName: d.title || d.name || '',\n        email,\n        website: d.website || d.url || '',\n        phone: d.phone || d.phoneUnformatted || '',\n        address: d.address || d.street || '',\n        city: d.city || '',\n        category: d.categoryName || (Array.isArray(d.categories) ? d.categories[0] : '') || '',\n        searchTerm: d.searchString || '',\n        googleMapsUrl: d.url || ''\n      }\n    });\n  }\n}\nreturn out;"
+      },
+      "id": "55555555-5555-5555-5555-555555555555",
+      "name": "Format Leads (1 row per email)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "options": {}
+      },
+      "id": "66666666-6666-6666-6666-666666666666",
+      "name": "Save to Google Sheets (optional)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [940, 300],
+      "disabled": true,
+      "notes": "OPTIONAL destination. To use: enable this node, connect your Google account credential, pick a Spreadsheet + Sheet, then it will auto-map the lead columns. Leave disabled to just view leads on the Format node."
+    }
+  ],
+  "connections": {
+    "Run / Execute Workflow": {
+      "main": [[{ "node": "Search Parameters", "type": "main", "index": 0 }]]
+    },
+    "Search Parameters": {
+      "main": [[{ "node": "Apify - Google Maps Email Extractor", "type": "main", "index": 0 }]]
+    },
+    "Apify - Google Maps Email Extractor": {
+      "main": [[{ "node": "Has Email?", "type": "main", "index": 0 }]]
+    },
+    "Has Email?": {
+      "main": [[{ "node": "Format Leads (1 row per email)", "type": "main", "index": 0 }]]
+    },
+    "Format Leads (1 row per email)": {
+      "main": [[{ "node": "Save to Google Sheets (optional)", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

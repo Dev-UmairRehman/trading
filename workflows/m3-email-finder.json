@@ -1,0 +1,307 @@
+{
+  "name": "M3 - Email Finder",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "m3man0000000000000000000000000000000",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 11
+            }
+          ]
+        }
+      },
+      "id": "m3sched00000000000000000000000000000",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Leads",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "=AND({has_website},NOT({has_email}),NOT({email_finder_done}))"
+            },
+            {
+              "name": "maxRecords",
+              "value": "50"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_PAT }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "m3get0000000000000000000000000000000",
+      "name": "Get No-Email Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        240,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const recs = ($json.records) || [];\nreturn recs.map((r) => ({ json: {\n  recordId: r.id, website: r.fields.website || '',\n  business_name: r.fields.business_name || '', location: r.fields.location || '',\n} }));"
+      },
+      "id": "m3exp0000000000000000000000000000000",
+      "name": "Expand",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.website }}/contact",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "m3fetch00000000000000000000000000000",
+      "name": "Fetch Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        680,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// lib/htmlSignals.js\n// Pure HTML signal extraction. No network, no DOM — regex over a string.\nconst SOCIAL_HOSTS = ['facebook.com', 'instagram.com', 'twitter.com', 'x.com', 'linkedin.com', 'tiktok.com', 'youtube.com'];\n\nfunction extractHtmlSignals(html, finalUrl) {\n  const h = String(html || '');\n  const lower = h.toLowerCase();\n\n  const hasTitle = /<title[^>]*>\\s*\\S/i.test(h);\n  const hasMetaDescription = /<meta[^>]+name=[\"']description[\"'][^>]*>/i.test(h);\n  const hasViewport = /<meta[^>]+name=[\"']viewport[\"'][^>]*>/i.test(h);\n  const hasH1 = /<h1[\\s>]/i.test(h);\n  const hasContactForm = /<form[\\s>]/i.test(h);\n  const hasSSL = String(finalUrl || '').toLowerCase().startsWith('https://');\n\n  const socialLinks = [];\n  const hrefRe = /href=[\"']([^\"']+)[\"']/gi;\n  let m;\n  while ((m = hrefRe.exec(h)) !== null) {\n    const url = m[1];\n    if (SOCIAL_HOSTS.some((host) => url.toLowerCase().includes(host)) && !socialLinks.includes(url)) {\n      socialLinks.push(url);\n    }\n  }\n\n  let copyrightYear = null;\n  const yearRe = /(?:©|&copy;|copyright)\\s*[^0-9]{0,8}((?:19|20)\\d{2})/gi;\n  while ((m = yearRe.exec(lower)) !== null) {\n    const y = parseInt(m[1], 10);\n    if (copyrightYear === null || y > copyrightYear) copyrightYear = y;\n  }\n\n  // De-obfuscate common \"name (at) domain (dot) com\" patterns before scanning.\n  const deob = h\n    .replace(/\\s*[([]\\s*at\\s*[)\\]]\\s*/gi, '@')\n    .replace(/\\s*[([]\\s*dot\\s*[)\\]]\\s*/gi, '.');\n  const found = [];\n  const emailRe = /[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}/gi;\n  while ((m = emailRe.exec(deob)) !== null) {\n    const e = m[0].toLowerCase();\n    if (!e.endsWith('.png') && !e.endsWith('.jpg') && !e.endsWith('.gif') && !e.endsWith('.webp') && !found.includes(e)) found.push(e);\n  }\n  // Prioritize role-based mailboxes (best for cold outreach); stable otherwise.\n  const ROLE = /^(info|contact|hello|enquiries|enquiry|office|admin|sales|support|reception)@/i;\n  const emails = found.slice().sort((a, b) => (ROLE.test(b) ? 1 : 0) - (ROLE.test(a) ? 1 : 0));\n\n  return { hasTitle, hasMetaDescription, hasViewport, hasH1, hasContactForm, hasSSL, socialLinks, copyrightYear, emails };\n}\n// lib/emailFinder.js — pure helpers for email discovery + manual queue.\nfunction normalizeBase(website) {\n  let u = String(website || '').trim();\n  if (!u) return '';\n  if (!/^https?:\\/\\//i.test(u)) u = 'http://' + u;\n  return u.replace(/\\/+$/, '');\n}\nfunction buildCandidateUrls(website) {\n  const base = normalizeBase(website);\n  if (!base) return [];\n  return [base, base + '/contact', base + '/contact-us', base + '/about'];\n}\nfunction buildLinkedinSearchUrl(businessName, location) {\n  const q = [businessName, location, 'site:linkedin.com'].filter(Boolean).join(' ');\n  return 'https://www.google.com/search?q=' + encodeURIComponent(q);\n}\nfunction pickBestEmail(emails) {\n  return (Array.isArray(emails) && emails.length) ? emails[0] : '';\n}\nconst lead = $('Expand').item.json;\nconst html = $json.data || $json.body || '';\nconst sig = extractHtmlSignals(html, lead.website || '');\nconst foundEmail = pickBestEmail(sig.emails);\nconst linkedinUrl = buildLinkedinSearchUrl(lead.business_name, lead.location);\nreturn { json: { recordId: lead.recordId, business_name: lead.business_name, foundEmail, linkedinUrl } };"
+      },
+      "id": "m3scrape0000000000000000000000000000",
+      "name": "Scrape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "e1",
+              "leftValue": "={{ $json.foundEmail }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ]
+        }
+      },
+      "id": "m3if00000000000000000000000000000000",
+      "name": "Found Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Leads",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_PAT }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ typecast: true, records: [ { id: $json.recordId, fields: { email: $json.foundEmail, has_email: true, email_finder_done: true, email_status: \"Not contacted\" } } ] }) }}",
+        "options": {}
+      },
+      "id": "m3pf00000000000000000000000000000000",
+      "name": "Save Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1360,
+        200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Leads",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_PAT }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ typecast: true, records: [ { id: $json.recordId, fields: { manual_outreach: true, linkedin_search_url: $json.linkedinUrl, email_finder_done: true } } ] }) }}",
+        "options": {}
+      },
+      "id": "m3pm00000000000000000000000000000000",
+      "name": "Queue Manual",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1360,
+        400
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get No-Email Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get No-Email Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get No-Email Leads": {
+      "main": [
+        [
+          {
+            "node": "Expand",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand": {
+      "main": [
+        [
+          {
+            "node": "Fetch Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Contact": {
+      "main": [
+        [
+          {
+            "node": "Scrape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape": {
+      "main": [
+        [
+          {
+            "node": "Found Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Found Email?": {
+      "main": [
+        [
+          {
+            "node": "Save Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Queue Manual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "3sNPCA6YTlyT9Nno"
+  },
+  "pinData": {}
+}
