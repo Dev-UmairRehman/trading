@@ -268,20 +268,6 @@
     },
     {
       "parameters": {
-        "amount": "={{ (function(){ var s=$itemIndex||0; return 20 + (Math.abs(s*37+13)%70); })() }}",
-        "unit": "seconds"
-      },
-      "id": "m2wait000000000000000000000000000000",
-      "name": "Throttle",
-      "type": "n8n-nodes-base.wait",
-      "typeVersion": 1.1,
-      "position": [
-        2090,
-        300
-      ]
-    },
-    {
-      "parameters": {
         "sendTo": "={{ $json.email }}",
         "subject": "={{ $json.subject }}",
         "emailType": "text",
@@ -451,17 +437,6 @@
       ]
     },
     "Parse Copy": {
-      "main": [
-        [
-          {
-            "node": "Throttle",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Throttle": {
       "main": [
         [
           {
