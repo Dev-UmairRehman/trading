@@ -54,7 +54,8 @@ try {
   };
 } catch (e) { pagespeed = null; }
 const sig = extractHtmlSignals(html, finalUrl);
-const htmlRaw = (about ? ('--- ABOUT/TEAM PAGE ---\\n' + String(about).slice(0, 3500) + '\\n\\n') : '') + '--- HOMEPAGE ---\\n' + String(html).slice(0, 2500);
+const aboutTxt = htmlToText(about), homeTxt = htmlToText(html);
+const htmlRaw = (aboutTxt ? ('--- ABOUT/TEAM PAGE ---\\n' + aboutTxt.slice(0, 3500) + '\\n\\n') : '') + '--- HOMEPAGE ---\\n' + homeTxt.slice(0, 2500);
 const messages = buildReviewPrompt(lead, htmlRaw);
 return { json: { ...lead, html: sig, htmlRaw, pagespeed, messages } };`;
 
