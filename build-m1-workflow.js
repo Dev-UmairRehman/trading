@@ -90,9 +90,12 @@ ${contactability}
 const d = $('Compute Scores').item.json;
 const enrich = $json || {};
 const person = (enrich.person) || (Array.isArray(enrich.matches) ? enrich.matches[0] : null) || {};
+const ai = d.ai || {};
 const scrapedEmail = (d.html && Array.isArray(d.html.emails) && d.html.emails[0]) || '';
-const email = person.email || scrapedEmail || '';   // Apollo first, site-scrape fallback
-const owner = [person.first_name, person.last_name].filter(Boolean).join(' ');
+const email = person.email || ai.ownerEmail || scrapedEmail || '';   // Apollo, then owner email from site, then any scraped
+const apolloName = [person.first_name, person.last_name].filter(Boolean).join(' ');
+const owner = apolloName || ai.ownerName || '';   // Apollo person, else owner extracted from the website
+const ownerRole = (!apolloName && ai.ownerRole) ? ai.ownerRole : (person.title || '');
 const route = deriveContactability(Boolean(email), Boolean(d.phone));
 const lead_score = Math.min(100, (d.lead_score || 0) + contactabilityBoost(route));
 const classification = classify(lead_score);
@@ -103,7 +106,8 @@ return { json: { place_id: d.place_id, fields: {
   review_count: d.review_count || 0, website_score: d.website_score, automation_score: d.automation_score,
   lead_score, classification, contactability: route,
   pagespeed_mobile: d.pagespeed && typeof d.pagespeed.mobilePerf === 'number' ? d.pagespeed.mobilePerf : null,
-  ai_findings: d.ai_findings || '', ai_rationale: d.ai_rationale || '',
+  ai_findings: d.ai_findings || '',
+  ai_rationale: (owner ? ('Contact: ' + owner + (ownerRole ? ' (' + ownerRole + ')' : '') + '\\n') : '') + (d.ai_rationale || ''),
   has_email: Boolean(email), has_phone: Boolean(d.phone), has_social: Boolean(d.has_social),
   status: 'New',
 } } };`;
