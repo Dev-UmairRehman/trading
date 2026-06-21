@@ -178,13 +178,22 @@
     {
       "parameters": {
         "url": "={{ $json.website }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            }
+          ]
+        },
         "options": {
           "response": {
             "response": {
               "responseFormat": "text"
             }
           },
-          "timeout": 15000
+          "timeout": 20000
         }
       },
       "id": "html-1000000000000000000000000000000",
@@ -214,13 +223,22 @@
     {
       "parameters": {
         "url": "={{ $json.aboutUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            }
+          ]
+        },
         "options": {
           "response": {
             "response": {
               "responseFormat": "text"
             }
           },
-          "timeout": 15000
+          "timeout": 20000
         }
       },
       "id": "about-fetch0000000000000000000000000",
