@@ -28,11 +28,21 @@ return places.map((pl) => {
   return { json: lead };
 });`;
 
-// Runs once PER ITEM. Current input = Fetch HTML output; paired refs for lead + PageSpeed.
+// Runs once PER ITEM after Fetch HTML. Finds the About/Team page URL to fetch next.
+const findAboutCode = `${htmlSignals}
+const lead = $('Normalize+Flag').item.json;
+const home = $json.data || $json.body || '';
+let aboutUrl = '';
+try { aboutUrl = findAboutUrl(home, lead.website || ''); } catch (e) { aboutUrl = ''; }
+return { json: { aboutUrl } };`;
+
+// Runs once PER ITEM. Current input = Fetch About output; homepage via $('Fetch HTML').
 const htmlSignalsCode = `${htmlSignals}
 ${aiReview}
 const lead = $('Normalize+Flag').item.json;
-const html = $json.data || $json.body || '';
+const fh = $('Fetch HTML').item.json;
+const html = fh.data || fh.body || '';
+const about = $json.data || $json.body || '';
 const finalUrl = lead.website || '';
 let pagespeed = null;
 try {
@@ -44,7 +54,7 @@ try {
   };
 } catch (e) { pagespeed = null; }
 const sig = extractHtmlSignals(html, finalUrl);
-const htmlRaw = String(html).slice(0, 4000);
+const htmlRaw = (about ? ('--- ABOUT/TEAM PAGE ---\\n' + String(about).slice(0, 3500) + '\\n\\n') : '') + '--- HOMEPAGE ---\\n' + String(html).slice(0, 2500);
 const messages = buildReviewPrompt(lead, htmlRaw);
 return { json: { ...lead, html: sig, htmlRaw, pagespeed, messages } };`;
 
@@ -147,7 +157,10 @@ return { json: { textQuery: t.textQuery, maxResultCount: 5, businessType: t.busi
       id: id('ps-1'), name: 'PageSpeed', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.4, position: [1120, 200], retryOnFail: true, maxTries: 3, waitBetweenTries: 8000, onError: 'continueRegularOutput' },
     { parameters: { url: '={{ $json.website }}', options: { response: { response: { responseFormat: 'text' } }, timeout: 15000 } },
       id: id('html-1'), name: 'Fetch HTML', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.4, position: [1340, 200], onError: 'continueRegularOutput' },
-    { parameters: { mode: 'runOnceForEachItem', jsCode: htmlSignalsCode }, id: id('hsig-1'), name: 'HTML Signals', type: 'n8n-nodes-base.code', typeVersion: 2, position: [1560, 200] },
+    { parameters: { mode: 'runOnceForEachItem', jsCode: findAboutCode }, id: id('about-find'), name: 'Find About', type: 'n8n-nodes-base.code', typeVersion: 2, position: [1430, 380] },
+    { parameters: { url: '={{ $json.aboutUrl }}', options: { response: { response: { responseFormat: 'text' } }, timeout: 15000 } },
+      id: id('about-fetch'), name: 'Fetch About', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.4, position: [1540, 380], onError: 'continueRegularOutput' },
+    { parameters: { mode: 'runOnceForEachItem', jsCode: htmlSignalsCode }, id: id('hsig-1'), name: 'HTML Signals', type: 'n8n-nodes-base.code', typeVersion: 2, position: [1700, 200] },
     { parameters: { method: 'POST', url: 'https://api.groq.com/openai/v1/chat/completions',
       sendHeaders: true, headerParameters: { parameters: [{ name: 'Authorization', value: '=Bearer {{ $env.GROQ_API_KEY }}' }] },
       sendBody: true, specifyBody: 'json',
@@ -183,7 +196,9 @@ return { json: { textQuery: t.textQuery, maxResultCount: 5, businessType: t.busi
       [{ node: 'No-site Defaults', type: 'main', index: 0 }],
     ] },
     'PageSpeed': { main: [[{ node: 'Fetch HTML', type: 'main', index: 0 }]] },
-    'Fetch HTML': { main: [[{ node: 'HTML Signals', type: 'main', index: 0 }]] },
+    'Fetch HTML': { main: [[{ node: 'Find About', type: 'main', index: 0 }]] },
+    'Find About': { main: [[{ node: 'Fetch About', type: 'main', index: 0 }]] },
+    'Fetch About': { main: [[{ node: 'HTML Signals', type: 'main', index: 0 }]] },
     'HTML Signals': { main: [[{ node: 'Groq Review', type: 'main', index: 0 }]] },
     'Groq Review': { main: [[{ node: 'Parse AI', type: 'main', index: 0 }]] },
     'Parse AI': { main: [[{ node: 'Merge', type: 'main', index: 0 }]] },

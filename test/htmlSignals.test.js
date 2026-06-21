@@ -1,7 +1,20 @@
 // test/htmlSignals.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { extractHtmlSignals } = require('../lib/htmlSignals');
+const { extractHtmlSignals, findAboutUrl } = require('../lib/htmlSignals');
+
+test('findAboutUrl resolves an about/team link to absolute URL', () => {
+  const html = '<a href="/about-us">About Us</a><a href="/services">Services</a>';
+  assert.equal(findAboutUrl(html, 'https://clinic.com'), 'https://clinic.com/about-us');
+});
+test('findAboutUrl matches by link text (Meet the team)', () => {
+  const html = '<a href="/our-people">Meet the team</a>';
+  assert.equal(findAboutUrl(html, 'https://x.com'), 'https://x.com/our-people');
+});
+test('findAboutUrl returns empty when no about link', () => {
+  assert.equal(findAboutUrl('<a href="/pricing">Pricing</a>', 'https://x.com'), '');
+  assert.equal(findAboutUrl('', 'https://x.com'), '');
+});
 
 test('detects modern, well-built page', () => {
   const html = `<!doctype html><html><head>
