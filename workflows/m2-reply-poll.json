@@ -9,7 +9,27 @@
       "typeVersion": 1,
       "position": [
         0,
-        300
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "rpsched00000000000000000000000000000",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        420
       ]
     },
     {
@@ -321,6 +341,17 @@
   ],
   "connections": {
     "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Recent Mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
       "main": [
         [
           {

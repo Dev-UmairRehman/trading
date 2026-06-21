@@ -49,7 +49,8 @@ const id = (s) => s.padEnd(36, '0').slice(0, 36);
 const wf = {
   name: 'M2 - Reply Poll',
   nodes: [
-    { parameters: {}, id: id('rpman'), name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 300] },
+    { parameters: {}, id: id('rpman'), name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 180] },
+    { parameters: { rule: { interval: [{ field: 'hours', hoursInterval: 2 }] } }, id: id('rpsched'), name: 'Schedule Trigger', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, position: [0, 420] },
     { parameters: { resource: 'message', operation: 'getAll', returnAll: false, limit: 30,
       filters: { q: 'newer_than:2d -from:me -in:chats' }, options: { downloadAttachments: false } },
       id: id('rpget'), name: 'Get Recent Mail', type: 'n8n-nodes-base.gmail', typeVersion: 2.1, position: [220, 300], credentials: { gmailOAuth2: GMAIL_CRED }, onError: 'continueRegularOutput' },
@@ -91,6 +92,7 @@ const wf = {
   ],
   connections: {
     'Manual Trigger': { main: [[{ node: 'Get Recent Mail', type: 'main', index: 0 }]] },
+    'Schedule Trigger': { main: [[{ node: 'Get Recent Mail', type: 'main', index: 0 }]] },
     'Get Recent Mail': { main: [[{ node: 'From', type: 'main', index: 0 }]] },
     'From': { main: [[{ node: 'Find Lead', type: 'main', index: 0 }]] },
     'Find Lead': { main: [[{ node: 'Found?', type: 'main', index: 0 }]] },
