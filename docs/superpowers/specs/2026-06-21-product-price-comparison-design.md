@@ -20,11 +20,13 @@ processed in batches.
 
 ## Price source
 
-**Apify Google Shopping scraper actor** (selected at build time from the Apify Store,
-e.g. a `google-shopping` actor), called via `POST /v2/acts/<actor>/run-sync-get-dataset-items`
-with `token = {{ $env.APIFY_API_TOKEN }}`. To stay efficient, **one Apify run per
-batch**: the batch's product names are sent as multiple search queries in a single
-run, and the returned dataset items are grouped back to each product by their query.
+**Apify actor `automation-lab~google-shopping-scraper`** (verified against the live
+token), called via `POST /v2/acts/automation-lab~google-shopping-scraper/run-sync-get-dataset-items`
+with `token = {{ $env.APIFY_API_TOKEN }}`. Input: `{ "queries": [<product names>] }`
+(accepts an ARRAY → **one Apify run per batch** of 20 products). Output dataset items
+(verified) have: `query` (which product — group key), `merchant` (retailer/site),
+`priceNumeric` (number), `price` (display string e.g. "$395.49"), `currency`,
+`position` (Google relevance rank), `title`, `rating`, `reviewCount`.
 
 Dependency: `APIFY_API_TOKEN` must be present in `.env` (user adds it; copied from the
 existing Google-Maps scraper workflow). The security policy prevents the agent from
@@ -107,8 +109,14 @@ Original input columns are preserved to the left.
 - Build validation: `node build-price-comparison.js` generates valid workflow JSON
   (node/connection counts) — consistent with existing build scripts.
 
-## Open build-time decision
+## Cost note
 
-The exact Apify actor id and its input/output field names are confirmed at build time
-against the Apify Store (and the user's token), then the parse layer is adapted to the
-actor's dataset shape. `resultsPerQuery` and `country` defaults chosen then.
+Token is on Apify's **FREE** plan. Each run consumes compute units; ~50 runs for 1000
+products may exceed the free monthly allowance — a small paid top-up (or splitting the
+file across days) may be needed. Flagged to the operator, not blocking.
+
+## Ordering & fields (resolved)
+
+Offers per product are ordered by `position` (Google relevance). `google_price` = the
+top-position offer's `priceNumeric`. `lowest_price` = min `priceNumeric` across offers.
+Competitor columns take the first 3 distinct `merchant`s by position.
